@@ -1,0 +1,19 @@
+{
+  "name": "issueforge-sample-app",
+  "version": "1.0.0",
+  "description": "A minimal Express app used as a target for IssueForge end-to-end runs.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test",
+    "lint": "echo \"lint: no linter configured\" && exit 0",
+    "typecheck": "echo \"typecheck: not a TypeScript project\" && exit 0",
+    "build": "echo \"build: nothing to build\" && exit 0"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
