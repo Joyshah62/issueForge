@@ -84,6 +84,7 @@ async function run(prompt, workspaceDir, opts = {}) {
 
     let response;
     // Retry up to 3 times on rate-limit (429) or overload (503) with backoff
+    let badToolCall = false;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         response = await client.chat.completions.create(params);
@@ -95,9 +96,19 @@ async function run(prompt, workspaceDir, opts = {}) {
           await new Promise(r => setTimeout(r, (attempt + 1) * 10000)); // 10s, 20s
           continue;
         }
+        // Groq returns 400 when the model produces a malformed tool call.
+        // Inject a corrective message and let the agent loop retry.
+        if (msg.includes('400') && msg.includes('Failed to call a function')) {
+          messages.push({ role: 'assistant', content: 'I attempted a tool call but it was malformed.' });
+          messages.push({ role: 'user', content: 'Your previous tool call was malformed. Use the exact tool names and parameter schemas provided. Try again.' });
+          badToolCall = true;
+          break;
+        }
         throw new Error(`LLM API error: ${msg}`);
       }
     }
+
+    if (badToolCall) continue;
 
     const choice = response.choices[0];
     const msg = choice.message;
