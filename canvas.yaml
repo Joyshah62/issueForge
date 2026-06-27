@@ -209,7 +209,7 @@ spec:
               if (ghResp.ok) {
                 const issue = await ghResp.json();
                 issueTitle = issue.title || "";
-                issueBody  = (issue.body || "").slice(0, 3000);
+                issueBody  = (issue.body || "").slice(0, 800);
               }
             } catch (_) {}
 

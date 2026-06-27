@@ -74,7 +74,7 @@ async function run(prompt, workspaceDir, opts = {}) {
     const params = {
       model,
       messages: pruned,
-      max_tokens: 4096,
+      max_tokens: opts.maxTokens || 4096,
     };
 
     if (!opts.noTools) {
@@ -83,10 +83,20 @@ async function run(prompt, workspaceDir, opts = {}) {
     }
 
     let response;
-    try {
-      response = await client.chat.completions.create(params);
-    } catch (err) {
-      throw new Error(`LLM API error: ${err.message}`);
+    // Retry up to 3 times on rate-limit (429) or overload (503) with backoff
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        response = await client.chat.completions.create(params);
+        break;
+      } catch (err) {
+        const msg = err.message || '';
+        const isRetryable = msg.includes('429') || msg.includes('503') || msg.includes('rate') || msg.includes('overloaded');
+        if (isRetryable && attempt < 2) {
+          await new Promise(r => setTimeout(r, (attempt + 1) * 10000)); // 10s, 20s
+          continue;
+        }
+        throw new Error(`LLM API error: ${msg}`);
+      }
     }
 
     const choice = response.choices[0];
