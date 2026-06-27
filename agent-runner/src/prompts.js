@@ -80,13 +80,14 @@ Steps:
 1. shell_exec: git clone --depth=1 ${ctx.clone_url} repo
 2. shell_exec: git -C repo checkout -b ${ctx.branch_name}
 3. shell_exec: git -C repo config user.email "issueforge@bot" && git -C repo config user.name "IssueForge"
-4. Install deps: cd repo/ and run the spec build_commands.install. If npm ci fails, try npm install instead
-5. Read likely_files, implement changes per acceptance_criteria, add tests per test_plan
-6. Run lint, typecheck, test, build (from spec build_commands). On failure fix and retry (max 3 attempts)
-7. shell_exec: git -C repo add -A && git -C repo commit -m "fix: issue #${ctx.issue_number}"
-8. shell_exec: git -C repo push https://x-access-token:${ctx.github_token}@github.com/${ctx.repo_full_name}.git ${ctx.branch_name}
-9. http_request GET https://api.github.com/repos/${ctx.repo_full_name} — get default_branch
-10. http_request POST https://api.github.com/repos/${ctx.repo_full_name}/pulls body: {"title":"[IssueForge] fix #${ctx.issue_number}","body":"Closes #${ctx.issue_number}","head":"${ctx.branch_name}","base":"<default_branch>","draft":true}
+4. list_dir repo to locate the project. PROJDIR = the directory that contains package.json (often "repo", but may be a subfolder like "repo/sample-app"). Use PROJDIR as the subdir for ALL install/test/build/edit steps below.
+5. Install deps: shell_exec npm ci in PROJDIR. If it fails, run npm install instead.
+6. Read the actual files in PROJDIR (use list_dir/read_file — do NOT trust likely_files blindly), then write_file your changes per acceptance_criteria, and add tests per test_plan. You MUST make real edits — verify with shell_exec "git -C repo status --porcelain" that there are changes before committing.
+7. Run test (and lint/typecheck/build if defined) in PROJDIR. On failure fix and retry (max 3 attempts).
+8. shell_exec: git -C repo add -A && git -C repo commit -m "fix: issue #${ctx.issue_number}". If commit says "nothing to commit", you failed to edit any file — go back to step 6.
+9. shell_exec: git -C repo push https://x-access-token:${ctx.github_token}@github.com/${ctx.repo_full_name}.git ${ctx.branch_name}
+10. http_request GET https://api.github.com/repos/${ctx.repo_full_name} — get default_branch
+11. http_request POST https://api.github.com/repos/${ctx.repo_full_name}/pulls body: {"title":"[IssueForge] fix #${ctx.issue_number}","body":"Closes #${ctx.issue_number}","head":"${ctx.branch_name}","base":"<default_branch>","draft":true}
 
 Return JSON: {"status":"passed|failed","branch_name":"${ctx.branch_name}","pr_url":"","pr_number":0,"commit_sha":"","files_changed":[],"tests_added":[],"validation":{"lint":"passed|failed|skipped","typecheck":"passed|failed|skipped","tests":"passed|failed|skipped","build":"passed|failed|skipped"},"repair_attempts":0,"failure_reason":"","summary":""}`,
   };
