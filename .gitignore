@@ -9,6 +9,7 @@ agent-runner/package-lock.json
 # Environment files — never commit real secrets
 .env
 .env.local
+.env.example
 .env.*.local
 agent-runner/.env
 agent-runner/.env.local

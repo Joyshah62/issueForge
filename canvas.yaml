@@ -2,26 +2,31 @@ apiVersion: v1
 kind: Canvas
 metadata:
   name: issueforge
+  id: 6428b1c1-b896-4448-a059-bc64c5a445ec
   description: >
     IssueForge — autonomous software factory. Converts a GitHub issue into a
     proof-backed pull request with a Render preview deployment.
 spec:
   edges:
+    # trigger (start) emits: default
     - sourceId: trigger-issue
       targetId: parse-issue
       channel: default
+    # runnerJS nodes emit: passed / failed
+    # init-run (upsertMemory) fires in parallel as a side-effect — no outgoing edge
     - sourceId: parse-issue
       targetId: init-run
-      channel: default
-    - sourceId: init-run
+      channel: passed
+    - sourceId: parse-issue
       targetId: analyze-and-specify
-      channel: default
+      channel: passed
     - sourceId: analyze-and-specify
       targetId: validate-spec
-      channel: default
+      channel: passed
     - sourceId: validate-spec
       targetId: if-spec-valid
-      channel: default
+      channel: passed
+    # if nodes emit: "true" / "false"
     - sourceId: if-spec-valid
       targetId: record-spec-failed
       channel: "false"
@@ -30,10 +35,10 @@ spec:
       channel: "true"
     - sourceId: review-plan
       targetId: validate-plan
-      channel: default
+      channel: passed
     - sourceId: validate-plan
       targetId: if-plan-approved
-      channel: default
+      channel: passed
     - sourceId: if-plan-approved
       targetId: record-plan-failed
       channel: "false"
@@ -42,10 +47,10 @@ spec:
       channel: "true"
     - sourceId: implement-validate-push-pr
       targetId: parse-impl-pr-result
-      channel: default
+      channel: passed
     - sourceId: parse-impl-pr-result
       targetId: if-impl-passed
-      channel: default
+      channel: passed
     - sourceId: if-impl-passed
       targetId: record-impl-failed
       channel: "false"
@@ -54,10 +59,10 @@ spec:
       channel: "true"
     - sourceId: deploy-to-render
       targetId: parse-deploy-result
-      channel: default
+      channel: passed
     - sourceId: parse-deploy-result
       targetId: if-deploy-ok
-      channel: default
+      channel: passed
     - sourceId: if-deploy-ok
       targetId: record-deploy-failed
       channel: "false"
@@ -66,10 +71,10 @@ spec:
       channel: "true"
     - sourceId: validate-preview
       targetId: parse-preview-result
-      channel: default
+      channel: passed
     - sourceId: parse-preview-result
       targetId: if-preview-ok
-      channel: default
+      channel: passed
     - sourceId: if-preview-ok
       targetId: record-preview-failed
       channel: "false"
@@ -78,7 +83,8 @@ spec:
       channel: "true"
     - sourceId: format-evidence
       targetId: post-evidence-comment
-      channel: default
+      channel: passed
+    # github component emits: default
     - sourceId: post-evidence-comment
       targetId: record-success
       channel: default
@@ -182,11 +188,11 @@ spec:
       configuration:
         execution_mode: host
         execution_timeout_seconds: 300
-        machine_type: e1-small-amd64
+        machine_type: e1-tiny-amd64
         script: |-
           // ── UPDATE THIS URL after deploying the agent-runner to Render ──
           const AGENT_RUNNER_URL = "https://issueforge-agent.onrender.com";
-          const AGENT_RUNNER_KEY = "YOUR_AGENT_RUNNER_KEY";
+          const AGENT_RUNNER_KEY = "e8ecae2cdf8a72d4fc8a328ae6ecef0a";
 
           async function main() {
             const parsed = ($["Parse Issue URL"] || {}).data || {};
@@ -312,7 +318,7 @@ spec:
         machine_type: e1-tiny-amd64
         script: |-
           const AGENT_RUNNER_URL = "https://issueforge-agent.onrender.com";
-          const AGENT_RUNNER_KEY = "YOUR_AGENT_RUNNER_KEY";
+          const AGENT_RUNNER_KEY = "e8ecae2cdf8a72d4fc8a328ae6ecef0a";
 
           async function main() {
             const specMsg = (($["Analyze and Specify"] || {}).data || {}).lastMessage || "";
@@ -404,10 +410,10 @@ spec:
       configuration:
         execution_mode: host
         execution_timeout_seconds: 1800
-        machine_type: e1-small-amd64
+        machine_type: e1-tiny-amd64
         script: |-
           const AGENT_RUNNER_URL = "https://issueforge-agent.onrender.com";
-          const AGENT_RUNNER_KEY = "YOUR_AGENT_RUNNER_KEY";
+          const AGENT_RUNNER_KEY = "e8ecae2cdf8a72d4fc8a328ae6ecef0a";
 
           async function main() {
             const parsed  = ($["Parse Issue URL"] || {}).data.result || {};
@@ -543,7 +549,7 @@ spec:
         machine_type: e1-tiny-amd64
         script: |-
           const AGENT_RUNNER_URL = "https://issueforge-agent.onrender.com";
-          const AGENT_RUNNER_KEY = "YOUR_AGENT_RUNNER_KEY";
+          const AGENT_RUNNER_KEY = "e8ecae2cdf8a72d4fc8a328ae6ecef0a";
 
           async function main() {
             const implResult = ($["Parse Implementation Result"] || {}).data.result || {};
@@ -658,10 +664,10 @@ spec:
       configuration:
         execution_mode: host
         execution_timeout_seconds: 300
-        machine_type: e1-small-amd64
+        machine_type: e1-tiny-amd64
         script: |-
           const AGENT_RUNNER_URL = "https://issueforge-agent.onrender.com";
-          const AGENT_RUNNER_KEY = "YOUR_AGENT_RUNNER_KEY";
+          const AGENT_RUNNER_KEY = "e8ecae2cdf8a72d4fc8a328ae6ecef0a";
 
           async function main() {
             const deployResult = ($["Parse Deploy Result"]         || {}).data.result || {};
@@ -788,13 +794,13 @@ spec:
             const deploy  = (($["Parse Deploy Result"]         || {}).data || {}).result || {};
             const preview = (($["Parse Preview Result"]        || {}).data || {}).result || {};
 
-            const statusIcon = preview.passed ? "✅" : "❌";
+            const statusMark = preview.passed ? "PASSED" : "FAILED";
             const overallText = preview.passed ? "Passed" : "Failed";
 
             // Acceptance criteria table
-            const acLines = (preview.ac_results || []).map(ac => {
-              const icon = ac.status === "passed" ? "✅" : ac.status === "failed" ? "❌" : "⏭️";
-              return `| ${ac.id} | ${ac.description} | ${icon} ${ac.status.toUpperCase()} | ${ac.notes || ""} |`;
+            const acLines = (preview.ac_results || []).map(function(ac) {
+              const mark = ac.status === "passed" ? "[pass]" : ac.status === "failed" ? "[fail]" : "[skip]";
+              return "| " + ac.id + " | " + ac.description + " | " + mark + " " + ac.status.toUpperCase() + " | " + (ac.notes || "") + " |";
             }).join("\n");
             const acTable = acLines
               ? "| ID | Criterion | Status | Notes |\n|---|---|---|---|\n" + acLines
@@ -802,48 +808,54 @@ spec:
 
             // Validation table
             const v = impl.validation || {};
-            const validLines = Object.entries(v).map(([step, status]) => {
-              const icon = status === "passed" ? "✅" : status === "failed" ? "❌" : "⏭️";
-              return `| ${step} | ${icon} ${status} |`;
+            const validLines = Object.entries(v).map(function(entry) {
+              const step = entry[0]; const status = entry[1];
+              const mark = status === "passed" ? "[pass]" : status === "failed" ? "[fail]" : "[skip]";
+              return "| " + step + " | " + mark + " " + status + " |";
             }).join("\n");
             const validTable = validLines
               ? "| Gate | Result |\n|---|---|\n" + validLines
               : "*Validation data unavailable.*";
 
             // Preview section
-            const previewSection = deploy.skipped
-              ? "> Preview deployment not configured (set `RENDER_API_KEY` and `RENDER_SERVICE_ID` in `issueforge-secrets`)."
-              : deploy.ok
-              ? `**[Open Preview](${preview.preview_url || deploy.preview_url})**`
-              : `> Deploy failed: ${deploy.error || "unknown error"}`;
+            let previewSection;
+            if (deploy.skipped) {
+              previewSection = "> Preview deployment not configured.";
+            } else if (deploy.ok) {
+              previewSection = "[Open Preview](" + (preview.preview_url || deploy.preview_url) + ")";
+            } else {
+              previewSection = "> Deploy failed: " + (deploy.error || "unknown error");
+            }
 
             const repairNote = (impl.repair_attempts || 0) > 0
-              ? `\n> _Repair attempts: ${impl.repair_attempts}_` : "";
+              ? "\n> Repair attempts: " + impl.repair_attempts : "";
 
-            const body = `## IssueForge Verification ${statusIcon}
-
-### Result
-**${overallText}**${repairNote}
-
-### Acceptance Criteria
-${acTable}
-
-### Validation Gates
-${validTable}
-
-### Preview
-${previewSection}
-
-### Evidence
-- **Files changed:** ${(impl.files_changed || []).join(", ") || "—"}
-- **Tests added:** ${(impl.tests_added || []).join(", ") || "—"}
-- **Summary:** ${impl.summary || "—"}
-
----
-*Generated by [IssueForge](https://github.com/your-org/issueforge)*`;
+            const lines = [
+              "## IssueForge Verification - " + statusMark,
+              "",
+              "### Result",
+              "**" + overallText + "**" + repairNote,
+              "",
+              "### Acceptance Criteria",
+              acTable,
+              "",
+              "### Validation Gates",
+              validTable,
+              "",
+              "### Preview",
+              previewSection,
+              "",
+              "### Evidence",
+              "- **Files changed:** " + ((impl.files_changed || []).join(", ") || "-"),
+              "- **Tests added:** " + ((impl.tests_added || []).join(", ") || "-"),
+              "- **Summary:** " + (impl.summary || "-"),
+              "",
+              "---",
+              "*Generated by IssueForge*",
+            ];
 
             return {
-              body,
+              body:       lines.join("\n"),
               pr_number:  impl.pr_number || 0,
               repo_name:  $["Parse Issue URL"].data.result.repo_name,
               repo_owner: $["Parse Issue URL"].data.result.repo_owner,
@@ -859,7 +871,7 @@ ${previewSection}
       component: github.createIssueComment
       position: { x: 11400, y: 0 }
       integration:
-        id: YOUR_GITHUB_INTEGRATION_ID
+        id: e35b60fb-04a2-4435-9e02-d39c5dfbb728
       configuration:
         repository: "{{ $['Format Evidence Report'].data.result.repo_name }}"
         issueNumber: "{{ $['Format Evidence Report'].data.result.pr_number }}"
