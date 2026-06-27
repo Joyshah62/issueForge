@@ -123,7 +123,7 @@ spec:
         machine_type: e1-tiny-amd64
         script: |-
           async function main() {
-            const issueUrl = ((($["Submit Issue"] || {}).data || {}).issue_url || "";
+            const issueUrl = (($["Submit Issue"] || {}).data || {}).issue_url || "";
             if (!issueUrl) throw new Error("issue_url is required");
 
             const match = issueUrl.match(/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)/);
