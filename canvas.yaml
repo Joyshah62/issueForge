@@ -123,7 +123,7 @@ spec:
         machine_type: e1-tiny-amd64
         script: |-
           async function main() {
-            const issueUrl = (($["Submit Issue"] || {}).data || {}).issue_url || "";
+            const issueUrl = ((($["Submit Issue"] || {}).data || {}).issue_url || "";
             if (!issueUrl) throw new Error("issue_url is required");
 
             const match = issueUrl.match(/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)/);
@@ -239,7 +239,7 @@ spec:
         machine_type: e1-tiny-amd64
         script: |-
           async function main() {
-            const raw = String((($["Analyze and Specify"] || {}).data || {}).lastMessage || "").trim();
+            const raw = String(((($["Analyze and Specify"] || {}).data || {}).result || {}).lastMessage || "").trim();
             if (!raw) return { valid: false, error: "Spec agent returned no output" };
 
             let spec;
@@ -321,7 +321,7 @@ spec:
           const AGENT_RUNNER_KEY = "e8ecae2cdf8a72d4fc8a328ae6ecef0a";
 
           async function main() {
-            const specMsg = (($["Analyze and Specify"] || {}).data || {}).lastMessage || "";
+            const specMsg = ((($["Analyze and Specify"] || {}).data || {}).result || {}).lastMessage || "";
             const parsed  = ($["Parse Issue URL"] || {}).data.result || {};
 
             const resp = await fetch(AGENT_RUNNER_URL + "/api/run", {
@@ -360,7 +360,7 @@ spec:
         machine_type: e1-tiny-amd64
         script: |-
           async function main() {
-            const response = String((($["Review Plan"] || {}).data || {}).lastMessage || "").trim();
+            const response = String(((($["Review Plan"] || {}).data || {}).result || {}).lastMessage || "").trim();
             const approved = response.toUpperCase().startsWith("APPROVED");
             return {
               approved,
@@ -417,7 +417,7 @@ spec:
 
           async function main() {
             const parsed  = ($["Parse Issue URL"] || {}).data.result || {};
-            const specMsg = (($["Analyze and Specify"] || {}).data || {}).lastMessage || "";
+            const specMsg = ((($["Analyze and Specify"] || {}).data || {}).result || {}).lastMessage || "";
 
             const resp = await fetch(AGENT_RUNNER_URL + "/api/run", {
               method: "POST",
@@ -462,7 +462,7 @@ spec:
         machine_type: e1-tiny-amd64
         script: |-
           async function main() {
-            const raw = String((($["Implement, Validate, and Open PR"] || {}).data || {}).lastMessage || "").trim();
+            const raw = String(((($["Implement, Validate, and Open PR"] || {}).data || {}).result || {}).lastMessage || "").trim();
             if (!raw) return { passed: false, error: "Agent returned no output" };
 
             let r;
@@ -593,7 +593,7 @@ spec:
         machine_type: e1-tiny-amd64
         script: |-
           async function main() {
-            const raw = String((($["Deploy to Render"] || {}).data || {}).lastMessage || "").trim();
+            const raw = String(((($["Deploy to Render"] || {}).data || {}).result || {}).lastMessage || "").trim();
             if (!raw) return { ok: false, skipped: false, error: "Deploy agent returned no output", preview_url: "" };
 
             let r = {};
@@ -672,7 +672,7 @@ spec:
           async function main() {
             const deployResult = ($["Parse Deploy Result"]         || {}).data.result || {};
             const implResult   = ($["Parse Implementation Result"] || {}).data.result || {};
-            const specMsg      = (($["Analyze and Specify"]        || {}).data || {}).lastMessage || "";
+            const specMsg      = ((($["Analyze and Specify"]        || {}).data || {}).result || {}).lastMessage || "";
 
             const resp = await fetch(AGENT_RUNNER_URL + "/api/run", {
               method: "POST",
@@ -715,7 +715,7 @@ spec:
         machine_type: e1-tiny-amd64
         script: |-
           async function main() {
-            const raw = String((($["Validate Preview"] || {}).data || {}).lastMessage || "").trim();
+            const raw = String(((($["Validate Preview"] || {}).data || {}).result || {}).lastMessage || "").trim();
             if (!raw) return { passed: false, error: "Preview agent returned no output", ac_results: [], ac_passed: 0, ac_total: 0 };
 
             let r = {};
@@ -790,9 +790,9 @@ spec:
         machine_type: e1-tiny-amd64
         script: |-
           async function main() {
-            const impl    = (($["Parse Implementation Result"] || {}).data || {}).result || {};
-            const deploy  = (($["Parse Deploy Result"]         || {}).data || {}).result || {};
-            const preview = (($["Parse Preview Result"]        || {}).data || {}).result || {};
+            const impl    = ((($["Parse Implementation Result"] || {}).data || {}).result || {};
+            const deploy  = ((($["Parse Deploy Result"]         || {}).data || {}).result || {};
+            const preview = ((($["Parse Preview Result"]        || {}).data || {}).result || {};
 
             const statusMark = preview.passed ? "PASSED" : "FAILED";
             const overallText = preview.passed ? "Passed" : "Failed";
