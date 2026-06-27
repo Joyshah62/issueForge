@@ -1,0 +1,15 @@
+{
+  "name": "issueforge-agent-runner",
+  "version": "1.0.0",
+  "description": "Llama-powered agent runner for IssueForge — wraps any OpenAI-compatible LLM with tool use (shell, fs, git, HTTP)",
+  "main": "src/index.js",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "openai": "^4.52.0"
+  }
+}

@@ -1,0 +1,146 @@
+apiVersion: v1
+kind: Console
+metadata:
+  name: issueforge
+spec:
+  layout:
+    - h: 14
+      i: readme
+      minH: 4
+      minW: 3
+      w: 4
+      x: 0
+      "y": 0
+    - h: 4
+      i: submit-issue
+      minH: 2
+      minW: 2
+      w: 4
+      x: 0
+      "y": 14
+    - h: 18
+      i: runs-table
+      minH: 6
+      minW: 4
+      w: 8
+      x: 4
+      "y": 0
+
+  panels:
+    # ── README ──────────────────────────────────────────────
+    - id: readme
+      type: markdown
+      content:
+        title: IssueForge
+        body: |
+          **IssueForge** converts a GitHub issue into a proof-backed pull request with a Render preview deployment.
+
+          <details>
+          <summary>Quick start</summary>
+
+          1. **Connect GitHub** — bind the integration on the canvas trigger and `Post Evidence Comment` node.
+          2. **Connect Claude** — create a Claude Managed Agent with access to `github.com`, bind the integration and paste the Agent ID + Environment ID into every `claude.runAgent` node.
+          3. **Add secrets** — create a SuperPlane secret named `issueforge-secrets` containing:
+             - `GITHUB_TOKEN` — GitHub personal-access token (repo, PR, and issue write permissions)
+             - `RENDER_API_KEY` — Render API key (optional; required for preview deployments)
+             - `RENDER_SERVICE_ID` — the Render service to deploy to (optional)
+          4. **Publish** the canvas.
+          5. **Submit an issue** using the panel below or click **Run** on the `Submit Issue` node.
+
+          </details>
+
+          <details>
+          <summary>Pipeline stages</summary>
+
+          | Stage | What happens |
+          |---|---|
+          | Analyze & Specify | Clones repo, reads issue, produces structured JSON spec |
+          | Plan Review | Independent LLM reviews spec for completeness |
+          | Implement | Creates branch, writes code, runs validation gates, repairs up to 3× |
+          | Deploy | Triggers Render deploy, polls until live |
+          | Preview Validation | Browser-tests the live preview against acceptance criteria |
+          | Evidence | Posts full verification report as a PR comment |
+
+          </details>
+
+          <details>
+          <summary>Failure statuses</summary>
+
+          - `specification_failed` — spec agent output failed schema validation
+          - `plan_review_failed` — plan reviewer rejected the spec
+          - `implementation_failed` — code or tests could not be fixed within 3 repair attempts
+          - `deployment_failed` — Render deploy did not reach live status
+          - `preview_verification_failed` — browser tests failed on the preview
+          - `success` — full pipeline completed
+
+          </details>
+
+    # ── SUBMIT TRIGGER ───────────────────────────────────────
+    - id: submit-issue
+      type: node
+      content:
+        node: trigger-issue
+        showRun: true
+        title: Submit a GitHub Issue
+
+    # ── RUNS TABLE ───────────────────────────────────────────
+    - id: runs-table
+      type: table
+      content:
+        title: Pipeline Runs
+        dataSource:
+          kind: memory
+          namespace: issueforge_runs
+        render:
+          sort:
+            field: started_at
+            order: desc
+          columns:
+            - field: issue_number
+              label: Issue
+            - field: repo_full_name
+              label: Repository
+              format: link
+              href: "https://github.com/{repo_full_name}/issues/{issue_number}"
+            - field: stage
+              label: Stage
+              format: badge
+            - field: status
+              label: Status
+              format: badge
+            - field: repair_attempts
+              label: Repairs
+            - field: ac_passed
+              label: AC Passed
+            - field: pr_url
+              label: PR
+              format: link
+              href: "{pr_url}"
+            - field: preview_url
+              label: Preview
+              format: link
+              href: "{preview_url}"
+            - field: started_at
+              label: Started
+              format: relative
+          rowStyles:
+            - field: status
+              op: eq
+              value: success
+              tone: green
+            - field: status
+              op: eq
+              value: running
+              tone: blue
+            - field: status
+              op: eq
+              value: failed
+              tone: red
+          rowActions:
+            - label: Re-run
+              kind: trigger
+              icon: refresh
+              variant: default
+              node: trigger-issue
+              payload:
+                issue_url: "{{ issue_url }}"

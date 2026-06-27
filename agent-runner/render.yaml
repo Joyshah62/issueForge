@@ -1,0 +1,34 @@
+services:
+  # ── Web Service: IssueForge Agent Runner ─────────────────────────────────────
+  # Free plan (512 MB RAM). Tests run in GitHub Actions CI, not locally,
+  # so peak memory stays well under the limit (git clone ~50 MB + Node ~150 MB).
+  - type: web
+    name: issueforge-agent
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    region: oregon
+    plan: standard
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: LLM_BASE_URL
+        sync: false          # set in Render dashboard
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: RENDER_API_KEY
+        sync: false
+      - key: RENDER_SERVICE_ID
+        sync: false
+      - key: AGENT_RUNNER_KEY
+        sync: false
+
+  # ── Web Service: Preview deployments ────────────────────────────────────────
+  # Connect the TARGET repo (the one you're fixing issues in) here.
+  # Render will auto-deploy pushed branches, giving each PR a live preview URL.
+  # Configure separately in the Render dashboard — one service per target repo.

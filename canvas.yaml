@@ -1,0 +1,897 @@
+apiVersion: v1
+kind: Canvas
+metadata:
+  name: issueforge
+  description: >
+    IssueForge — autonomous software factory. Converts a GitHub issue into a
+    proof-backed pull request with a Render preview deployment.
+spec:
+  edges:
+    - sourceId: trigger-issue
+      targetId: parse-issue
+      channel: default
+    - sourceId: parse-issue
+      targetId: init-run
+      channel: default
+    - sourceId: init-run
+      targetId: analyze-and-specify
+      channel: default
+    - sourceId: analyze-and-specify
+      targetId: validate-spec
+      channel: default
+    - sourceId: validate-spec
+      targetId: if-spec-valid
+      channel: default
+    - sourceId: if-spec-valid
+      targetId: record-spec-failed
+      channel: "false"
+    - sourceId: if-spec-valid
+      targetId: review-plan
+      channel: "true"
+    - sourceId: review-plan
+      targetId: validate-plan
+      channel: default
+    - sourceId: validate-plan
+      targetId: if-plan-approved
+      channel: default
+    - sourceId: if-plan-approved
+      targetId: record-plan-failed
+      channel: "false"
+    - sourceId: if-plan-approved
+      targetId: implement-validate-push-pr
+      channel: "true"
+    - sourceId: implement-validate-push-pr
+      targetId: parse-impl-pr-result
+      channel: default
+    - sourceId: parse-impl-pr-result
+      targetId: if-impl-passed
+      channel: default
+    - sourceId: if-impl-passed
+      targetId: record-impl-failed
+      channel: "false"
+    - sourceId: if-impl-passed
+      targetId: deploy-to-render
+      channel: "true"
+    - sourceId: deploy-to-render
+      targetId: parse-deploy-result
+      channel: default
+    - sourceId: parse-deploy-result
+      targetId: if-deploy-ok
+      channel: default
+    - sourceId: if-deploy-ok
+      targetId: record-deploy-failed
+      channel: "false"
+    - sourceId: if-deploy-ok
+      targetId: validate-preview
+      channel: "true"
+    - sourceId: validate-preview
+      targetId: parse-preview-result
+      channel: default
+    - sourceId: parse-preview-result
+      targetId: if-preview-ok
+      channel: default
+    - sourceId: if-preview-ok
+      targetId: record-preview-failed
+      channel: "false"
+    - sourceId: if-preview-ok
+      targetId: format-evidence
+      channel: "true"
+    - sourceId: format-evidence
+      targetId: post-evidence-comment
+      channel: default
+    - sourceId: post-evidence-comment
+      targetId: record-success
+      channel: default
+
+  nodes:
+    # ──────────────────────────────────────────────────────────
+    # TRIGGER — manual start with a GitHub issue URL
+    # ──────────────────────────────────────────────────────────
+    - id: trigger-issue
+      name: Submit Issue
+      type: TYPE_TRIGGER
+      component: start
+      position: { x: 0, y: 0 }
+      configuration:
+        templates:
+          - name: run
+            parameters:
+              - name: issue_url
+                title: GitHub Issue URL
+                placeholder: "https://github.com/owner/repo/issues/123"
+                type: string
+            payload:
+              issue_url: "{{ parameters.issue_url }}"
+
+    # ──────────────────────────────────────────────────────────
+    # PARSE — extract owner/repo/number from the URL
+    # ──────────────────────────────────────────────────────────
+    - id: parse-issue
+      name: Parse Issue URL
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 600, y: 0 }
+      configuration:
+        execution_mode: host
+        execution_timeout_seconds: 30
+        machine_type: e1-tiny-amd64
+        script: |-
+          async function main() {
+            const issueUrl = (root().data.issue_url || "").trim();
+            if (!issueUrl) throw new Error("issue_url is required");
+
+            const match = issueUrl.match(/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)/);
+            if (!match) throw new Error("Invalid GitHub issue URL: " + issueUrl);
+
+            const [, owner, repo, issueStr] = match;
+            const issueNumber = parseInt(issueStr, 10);
+            const repoFullName = owner + "/" + repo;
+
+            // Build a branch name that is safe for git
+            const branchName = "issueforge/" + issueNumber;
+
+            return {
+              issue_url:      issueUrl,
+              issue_number:   issueNumber,
+              repo_full_name: repoFullName,
+              repo_owner:     owner,
+              repo_name:      repo,
+              clone_url:      "https://github.com/" + repoFullName + ".git",
+              branch_name:    branchName,
+              status:         "parsed",
+            };
+          }
+
+    # ──────────────────────────────────────────────────────────
+    # INIT — create the memory record for this run
+    # ──────────────────────────────────────────────────────────
+    - id: init-run
+      name: Initialize Run
+      type: TYPE_ACTION
+      component: upsertMemory
+      position: { x: 1200, y: 0 }
+      configuration:
+        namespace: issueforge_runs
+        matchList:
+          - name: issue_url
+            value: "{{ $['Parse Issue URL'].data.result.issue_url }}"
+        valueList:
+          - name: issue_url
+            value: "{{ $['Parse Issue URL'].data.result.issue_url }}"
+          - name: issue_number
+            value: "{{ string($['Parse Issue URL'].data.result.issue_number) }}"
+          - name: repo_full_name
+            value: "{{ $['Parse Issue URL'].data.result.repo_full_name }}"
+          - name: branch_name
+            value: "{{ $['Parse Issue URL'].data.result.branch_name }}"
+          - name: status
+            value: "running"
+          - name: stage
+            value: "analyzing"
+          - name: started_at
+            value: "{{ string(int(now().Unix())) }}"
+
+    # ──────────────────────────────────────────────────────────
+    # SPEC AGENT — fetch issue, clone repo, generate structured spec
+    # ──────────────────────────────────────────────────────────
+    - id: analyze-and-specify
+      name: Analyze and Specify
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 1800, y: 0 }
+      configuration:
+        execution_mode: host
+        execution_timeout_seconds: 300
+        machine_type: e1-small-amd64
+        script: |-
+          // ── UPDATE THIS URL after deploying the agent-runner to Render ──
+          const AGENT_RUNNER_URL = "https://issueforge-agent.onrender.com";
+          const AGENT_RUNNER_KEY = "YOUR_AGENT_RUNNER_KEY";
+
+          async function main() {
+            const parsed = ($["Parse Issue URL"] || {}).data || {};
+            const ctx = parsed.result || {};
+
+            const resp = await fetch(AGENT_RUNNER_URL + "/api/run", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + AGENT_RUNNER_KEY,
+              },
+              body: JSON.stringify({
+                run_id:     String(ctx.issue_number) + "-spec-" + Date.now(),
+                agent_type: "spec",
+                context: {
+                  issue_url:      ctx.issue_url,
+                  issue_number:   ctx.issue_number,
+                  repo_full_name: ctx.repo_full_name,
+                  clone_url:      ctx.clone_url,
+                },
+              }),
+            });
+
+            if (!resp.ok) {
+              const text = await resp.text();
+              throw new Error("Agent runner error " + resp.status + ": " + text.slice(0, 300));
+            }
+
+            const data = await resp.json();
+            return { lastMessage: data.last_message, steps_taken: data.steps_taken, duration_ms: data.duration_ms };
+          }
+
+    # ──────────────────────────────────────────────────────────
+    # VALIDATE SPEC — enforce required fields and schema
+    # ──────────────────────────────────────────────────────────
+    - id: validate-spec
+      name: Validate Specification
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 2400, y: 0 }
+      configuration:
+        execution_mode: host
+        execution_timeout_seconds: 30
+        machine_type: e1-tiny-amd64
+        script: |-
+          async function main() {
+            const raw = String((($["Analyze and Specify"] || {}).data || {}).lastMessage || "").trim();
+            if (!raw) return { valid: false, error: "Spec agent returned no output" };
+
+            let spec;
+            try {
+              let txt = raw;
+              const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+              if (fence) txt = fence[1].trim();
+              const s = txt.indexOf("{"), e = txt.lastIndexOf("}");
+              if (s !== -1 && e !== -1) txt = txt.slice(s, e + 1);
+              spec = JSON.parse(txt);
+            } catch (err) {
+              return { valid: false, error: "JSON parse error: " + err.message, raw: raw.slice(0, 400) };
+            }
+
+            const required = [
+              "summary", "acceptance_criteria", "likely_files",
+              "implementation_plan", "test_plan", "build_commands",
+            ];
+            for (const f of required) {
+              if (!spec[f]) return { valid: false, error: "Missing field: " + f };
+            }
+            if (!Array.isArray(spec.acceptance_criteria) || spec.acceptance_criteria.length === 0)
+              return { valid: false, error: "acceptance_criteria must be a non-empty array" };
+            for (const ac of spec.acceptance_criteria) {
+              if (!ac.id || !ac.description || !ac.verification)
+                return { valid: false, error: "AC missing id/description/verification", ac };
+            }
+            if (!Array.isArray(spec.implementation_plan) || spec.implementation_plan.length === 0)
+              return { valid: false, error: "implementation_plan must be a non-empty array" };
+            if (!Array.isArray(spec.test_plan) || spec.test_plan.length === 0)
+              return { valid: false, error: "test_plan must be a non-empty array" };
+
+            return { valid: true, spec, ac_count: spec.acceptance_criteria.length };
+          }
+
+    # ──────────────────────────────────────────────────────────
+    # GATE 1 — spec must be valid
+    # ──────────────────────────────────────────────────────────
+    - id: if-spec-valid
+      name: Spec Valid?
+      type: TYPE_ACTION
+      component: if
+      position: { x: 3000, y: 0 }
+      configuration:
+        expression: "{{ $['Validate Specification'].data.result.valid == true }}"
+
+    - id: record-spec-failed
+      name: Record Spec Failure
+      type: TYPE_ACTION
+      component: upsertMemory
+      position: { x: 3600, y: 600 }
+      configuration:
+        namespace: issueforge_runs
+        matchList:
+          - name: issue_url
+            value: "{{ $['Parse Issue URL'].data.result.issue_url }}"
+        valueList:
+          - name: status
+            value: "failed"
+          - name: stage
+            value: "specification_failed"
+          - name: error
+            value: "{{ $['Validate Specification'].data.result.error }}"
+
+    # ──────────────────────────────────────────────────────────
+    # PLAN REVIEW AGENT — independent LLM reviews the spec
+    # ──────────────────────────────────────────────────────────
+    - id: review-plan
+      name: Review Plan
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 3600, y: 0 }
+      configuration:
+        execution_mode: host
+        execution_timeout_seconds: 120
+        machine_type: e1-tiny-amd64
+        script: |-
+          const AGENT_RUNNER_URL = "https://issueforge-agent.onrender.com";
+          const AGENT_RUNNER_KEY = "YOUR_AGENT_RUNNER_KEY";
+
+          async function main() {
+            const specMsg = (($["Analyze and Specify"] || {}).data || {}).lastMessage || "";
+            const parsed  = ($["Parse Issue URL"] || {}).data.result || {};
+
+            const resp = await fetch(AGENT_RUNNER_URL + "/api/run", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + AGENT_RUNNER_KEY,
+              },
+              body: JSON.stringify({
+                run_id:     String(parsed.issue_number) + "-review-" + Date.now(),
+                agent_type: "review",
+                context: { spec: specMsg },
+              }),
+            });
+
+            if (!resp.ok) {
+              const text = await resp.text();
+              throw new Error("Agent runner error " + resp.status + ": " + text.slice(0, 300));
+            }
+
+            const data = await resp.json();
+            return { lastMessage: data.last_message, steps_taken: data.steps_taken };
+          }
+
+    # ──────────────────────────────────────────────────────────
+    # PARSE PLAN REVIEW
+    # ──────────────────────────────────────────────────────────
+    - id: validate-plan
+      name: Validate Plan Review
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 4200, y: 0 }
+      configuration:
+        execution_mode: host
+        execution_timeout_seconds: 15
+        machine_type: e1-tiny-amd64
+        script: |-
+          async function main() {
+            const response = String((($["Review Plan"] || {}).data || {}).lastMessage || "").trim();
+            const approved = response.toUpperCase().startsWith("APPROVED");
+            return {
+              approved,
+              response_preview: response.slice(0, 400),
+              issues: approved ? [] : response.split("\n").slice(1).filter(Boolean),
+            };
+          }
+
+    # ──────────────────────────────────────────────────────────
+    # GATE 2 — plan must be approved
+    # ──────────────────────────────────────────────────────────
+    - id: if-plan-approved
+      name: Plan Approved?
+      type: TYPE_ACTION
+      component: if
+      position: { x: 4800, y: 0 }
+      configuration:
+        expression: "{{ $['Validate Plan Review'].data.result.approved == true }}"
+
+    - id: record-plan-failed
+      name: Record Plan Failure
+      type: TYPE_ACTION
+      component: upsertMemory
+      position: { x: 5400, y: 600 }
+      configuration:
+        namespace: issueforge_runs
+        matchList:
+          - name: issue_url
+            value: "{{ $['Parse Issue URL'].data.result.issue_url }}"
+        valueList:
+          - name: status
+            value: "failed"
+          - name: stage
+            value: "plan_review_failed"
+          - name: error
+            value: "{{ $['Validate Plan Review'].data.result.response_preview }}"
+
+    # ──────────────────────────────────────────────────────────
+    # IMPLEMENTATION AGENT
+    # Clones repo → implements → validates → repairs (up to 3×) → pushes → opens PR
+    # ──────────────────────────────────────────────────────────
+    - id: implement-validate-push-pr
+      name: Implement, Validate, and Open PR
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 5400, y: 0 }
+      configuration:
+        execution_mode: host
+        execution_timeout_seconds: 1800
+        machine_type: e1-small-amd64
+        script: |-
+          const AGENT_RUNNER_URL = "https://issueforge-agent.onrender.com";
+          const AGENT_RUNNER_KEY = "YOUR_AGENT_RUNNER_KEY";
+
+          async function main() {
+            const parsed  = ($["Parse Issue URL"] || {}).data.result || {};
+            const specMsg = (($["Analyze and Specify"] || {}).data || {}).lastMessage || "";
+
+            const resp = await fetch(AGENT_RUNNER_URL + "/api/run", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + AGENT_RUNNER_KEY,
+              },
+              body: JSON.stringify({
+                run_id:     String(parsed.issue_number) + "-impl-" + Date.now(),
+                agent_type: "implement",
+                context: {
+                  issue_url:      parsed.issue_url,
+                  issue_number:   parsed.issue_number,
+                  repo_full_name: parsed.repo_full_name,
+                  clone_url:      parsed.clone_url,
+                  branch_name:    parsed.branch_name,
+                  spec:           specMsg,
+                },
+              }),
+            });
+
+            if (!resp.ok) {
+              const text = await resp.text();
+              throw new Error("Agent runner error " + resp.status + ": " + text.slice(0, 300));
+            }
+
+            const data = await resp.json();
+            return { lastMessage: data.last_message, steps_taken: data.steps_taken, duration_ms: data.duration_ms };
+          }
+
+    # ──────────────────────────────────────────────────────────
+    # PARSE IMPLEMENTATION + PR RESULT
+    # ──────────────────────────────────────────────────────────
+    - id: parse-impl-pr-result
+      name: Parse Implementation Result
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 6000, y: 0 }
+      configuration:
+        execution_mode: host
+        execution_timeout_seconds: 15
+        machine_type: e1-tiny-amd64
+        script: |-
+          async function main() {
+            const raw = String((($["Implement, Validate, and Open PR"] || {}).data || {}).lastMessage || "").trim();
+            if (!raw) return { passed: false, error: "Agent returned no output" };
+
+            let r;
+            try {
+              let txt = raw;
+              const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+              if (fence) txt = fence[1].trim();
+              const s = txt.indexOf("{"), e = txt.lastIndexOf("}");
+              if (s !== -1 && e !== -1) txt = txt.slice(s, e + 1);
+              r = JSON.parse(txt);
+            } catch (err) {
+              // Try to salvage a PR URL from free text
+              const urlMatch = raw.match(/https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/(\d+)/);
+              if (urlMatch) {
+                return {
+                  passed: true,
+                  pr_url: urlMatch[0],
+                  pr_number: parseInt(urlMatch[1], 10),
+                  branch_name: $["Parse Issue URL"].data.result.branch_name,
+                  files_changed: [], tests_added: [], validation: {},
+                  repair_attempts: 0, failure_reason: "", summary: "",
+                };
+              }
+              return { passed: false, error: "JSON parse error: " + err.message };
+            }
+
+            return {
+              passed:          r.status === "passed",
+              pr_url:          r.pr_url || "",
+              pr_number:       r.pr_number || 0,
+              branch_name:     r.branch_name || $["Parse Issue URL"].data.result.branch_name,
+              commit_sha:      r.commit_sha || "",
+              files_changed:   r.files_changed || [],
+              tests_added:     r.tests_added || [],
+              validation:      r.validation || {},
+              repair_attempts: r.repair_attempts || 0,
+              failure_reason:  r.failure_reason || "",
+              summary:         r.summary || "",
+            };
+          }
+
+    # ──────────────────────────────────────────────────────────
+    # GATE 3 — implementation + PR must have passed
+    # ──────────────────────────────────────────────────────────
+    - id: if-impl-passed
+      name: Implementation Passed?
+      type: TYPE_ACTION
+      component: if
+      position: { x: 6600, y: 0 }
+      configuration:
+        expression: "{{ $['Parse Implementation Result'].data.result.passed == true }}"
+
+    - id: record-impl-failed
+      name: Record Implementation Failure
+      type: TYPE_ACTION
+      component: upsertMemory
+      position: { x: 7200, y: 600 }
+      configuration:
+        namespace: issueforge_runs
+        matchList:
+          - name: issue_url
+            value: "{{ $['Parse Issue URL'].data.result.issue_url }}"
+        valueList:
+          - name: status
+            value: "failed"
+          - name: stage
+            value: "implementation_failed"
+          - name: repair_attempts
+            value: "{{ string($['Parse Implementation Result'].data.result.repair_attempts) }}"
+          - name: error
+            value: "{{ $['Parse Implementation Result'].data.result.failure_reason }}"
+
+    # ──────────────────────────────────────────────────────────
+    # RENDER DEPLOY — trigger deploy, poll for live URL
+    # ──────────────────────────────────────────────────────────
+    - id: deploy-to-render
+      name: Deploy to Render
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 7200, y: 0 }
+      configuration:
+        execution_mode: host
+        execution_timeout_seconds: 360
+        machine_type: e1-tiny-amd64
+        script: |-
+          const AGENT_RUNNER_URL = "https://issueforge-agent.onrender.com";
+          const AGENT_RUNNER_KEY = "YOUR_AGENT_RUNNER_KEY";
+
+          async function main() {
+            const implResult = ($["Parse Implementation Result"] || {}).data.result || {};
+
+            const resp = await fetch(AGENT_RUNNER_URL + "/api/run", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + AGENT_RUNNER_KEY,
+              },
+              body: JSON.stringify({
+                run_id:     implResult.pr_number + "-deploy-" + Date.now(),
+                agent_type: "deploy",
+                context: {
+                  branch_name: implResult.branch_name,
+                  pr_url:      implResult.pr_url,
+                },
+              }),
+            });
+
+            if (!resp.ok) {
+              const text = await resp.text();
+              return { lastMessage: JSON.stringify({ ok: false, skipped: false, error: "Runner error " + resp.status + ": " + text.slice(0, 200) }) };
+            }
+
+            const data = await resp.json();
+            return { lastMessage: data.last_message, steps_taken: data.steps_taken };
+          }
+
+    # ──────────────────────────────────────────────────────────
+    # PARSE DEPLOY RESULT
+    # ──────────────────────────────────────────────────────────
+    - id: parse-deploy-result
+      name: Parse Deploy Result
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 7800, y: 0 }
+      configuration:
+        execution_mode: host
+        execution_timeout_seconds: 15
+        machine_type: e1-tiny-amd64
+        script: |-
+          async function main() {
+            const raw = String((($["Deploy to Render"] || {}).data || {}).lastMessage || "").trim();
+            if (!raw) return { ok: false, skipped: false, error: "Deploy agent returned no output", preview_url: "" };
+
+            let r = {};
+            try {
+              let txt = raw;
+              const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+              if (fence) txt = fence[1].trim();
+              const s = txt.indexOf("{"), e = txt.lastIndexOf("}");
+              if (s !== -1 && e !== -1) txt = txt.slice(s, e + 1);
+              r = JSON.parse(txt);
+            } catch (err) {
+              // If skipped message is in the text
+              if (raw.toLowerCase().includes("not configured") || raw.toLowerCase().includes("skipped")) {
+                return { ok: false, skipped: true, reason: raw.slice(0, 200), preview_url: "" };
+              }
+              return { ok: false, skipped: false, error: "JSON parse error: " + err.message, preview_url: "" };
+            }
+
+            return {
+              ok:          r.ok === true,
+              skipped:     r.skipped === true,
+              deploy_id:   r.deploy_id || "",
+              preview_url: r.preview_url || "",
+              status:      r.status || "",
+              error:       r.error || r.reason || "",
+            };
+          }
+
+    # ──────────────────────────────────────────────────────────
+    # GATE 4 — deploy must succeed (or be explicitly skipped)
+    # ──────────────────────────────────────────────────────────
+    - id: if-deploy-ok
+      name: Deploy OK?
+      type: TYPE_ACTION
+      component: if
+      position: { x: 8400, y: 0 }
+      configuration:
+        expression: "{{ $['Parse Deploy Result'].data.result.ok == true || $['Parse Deploy Result'].data.result.skipped == true }}"
+
+    - id: record-deploy-failed
+      name: Record Deploy Failure
+      type: TYPE_ACTION
+      component: upsertMemory
+      position: { x: 9000, y: 600 }
+      configuration:
+        namespace: issueforge_runs
+        matchList:
+          - name: issue_url
+            value: "{{ $['Parse Issue URL'].data.result.issue_url }}"
+        valueList:
+          - name: status
+            value: "failed"
+          - name: stage
+            value: "deployment_failed"
+          - name: pr_url
+            value: "{{ $['Parse Implementation Result'].data.result.pr_url }}"
+          - name: error
+            value: "{{ $['Parse Deploy Result'].data.result.error }}"
+
+    # ──────────────────────────────────────────────────────────
+    # PREVIEW VALIDATION AGENT — browser-test the live URL
+    # ──────────────────────────────────────────────────────────
+    - id: validate-preview
+      name: Validate Preview
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 9000, y: 0 }
+      configuration:
+        execution_mode: host
+        execution_timeout_seconds: 300
+        machine_type: e1-small-amd64
+        script: |-
+          const AGENT_RUNNER_URL = "https://issueforge-agent.onrender.com";
+          const AGENT_RUNNER_KEY = "YOUR_AGENT_RUNNER_KEY";
+
+          async function main() {
+            const deployResult = ($["Parse Deploy Result"]         || {}).data.result || {};
+            const implResult   = ($["Parse Implementation Result"] || {}).data.result || {};
+            const specMsg      = (($["Analyze and Specify"]        || {}).data || {}).lastMessage || "";
+
+            const resp = await fetch(AGENT_RUNNER_URL + "/api/run", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + AGENT_RUNNER_KEY,
+              },
+              body: JSON.stringify({
+                run_id:     implResult.pr_number + "-validate-" + Date.now(),
+                agent_type: "validate",
+                context: {
+                  preview_url:    deployResult.preview_url || "",
+                  render_skipped: deployResult.skipped || false,
+                  pr_url:         implResult.pr_url || "",
+                  spec:           specMsg,
+                },
+              }),
+            });
+
+            if (!resp.ok) {
+              const text = await resp.text();
+              return { lastMessage: JSON.stringify({ overall: "failed", preview_loaded: false, console_errors: [], ac_results: [], summary: "Validation runner error: " + resp.status }) };
+            }
+
+            const data = await resp.json();
+            return { lastMessage: data.last_message, steps_taken: data.steps_taken };
+          }
+
+    # ──────────────────────────────────────────────────────────
+    # PARSE PREVIEW RESULT
+    # ──────────────────────────────────────────────────────────
+    - id: parse-preview-result
+      name: Parse Preview Result
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 9600, y: 0 }
+      configuration:
+        execution_mode: host
+        execution_timeout_seconds: 15
+        machine_type: e1-tiny-amd64
+        script: |-
+          async function main() {
+            const raw = String((($["Validate Preview"] || {}).data || {}).lastMessage || "").trim();
+            if (!raw) return { passed: false, error: "Preview agent returned no output", ac_results: [], ac_passed: 0, ac_total: 0 };
+
+            let r = {};
+            try {
+              let txt = raw;
+              const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+              if (fence) txt = fence[1].trim();
+              const s = txt.indexOf("{"), e = txt.lastIndexOf("}");
+              if (s !== -1 && e !== -1) txt = txt.slice(s, e + 1);
+              r = JSON.parse(txt);
+            } catch (err) {
+              return { passed: false, error: "JSON parse error: " + err.message, ac_results: [], ac_passed: 0, ac_total: 0 };
+            }
+
+            const acs = r.ac_results || [];
+            return {
+              passed:         r.overall === "passed",
+              preview_loaded: r.preview_loaded || false,
+              console_errors: r.console_errors || [],
+              ac_results:     acs,
+              ac_passed:      acs.filter(a => a.status === "passed").length,
+              ac_total:       acs.length,
+              summary:        r.summary || "",
+              preview_url:    $["Parse Deploy Result"].data.result.preview_url || "",
+            };
+          }
+
+    # ──────────────────────────────────────────────────────────
+    # GATE 5 — preview must pass (or Render was skipped)
+    # ──────────────────────────────────────────────────────────
+    - id: if-preview-ok
+      name: Preview OK?
+      type: TYPE_ACTION
+      component: if
+      position: { x: 10200, y: 0 }
+      configuration:
+        expression: "{{ $['Parse Preview Result'].data.result.passed == true }}"
+
+    - id: record-preview-failed
+      name: Record Preview Failure
+      type: TYPE_ACTION
+      component: upsertMemory
+      position: { x: 10800, y: 600 }
+      configuration:
+        namespace: issueforge_runs
+        matchList:
+          - name: issue_url
+            value: "{{ $['Parse Issue URL'].data.result.issue_url }}"
+        valueList:
+          - name: status
+            value: "failed"
+          - name: stage
+            value: "preview_verification_failed"
+          - name: pr_url
+            value: "{{ $['Parse Implementation Result'].data.result.pr_url }}"
+          - name: preview_url
+            value: "{{ $['Parse Preview Result'].data.result.preview_url }}"
+          - name: error
+            value: "{{ $['Parse Preview Result'].data.result.summary }}"
+
+    # ──────────────────────────────────────────────────────────
+    # FORMAT EVIDENCE — build the PR comment body
+    # ──────────────────────────────────────────────────────────
+    - id: format-evidence
+      name: Format Evidence Report
+      type: TYPE_ACTION
+      component: runnerJS
+      position: { x: 10800, y: 0 }
+      configuration:
+        execution_mode: host
+        execution_timeout_seconds: 15
+        machine_type: e1-tiny-amd64
+        script: |-
+          async function main() {
+            const impl    = (($["Parse Implementation Result"] || {}).data || {}).result || {};
+            const deploy  = (($["Parse Deploy Result"]         || {}).data || {}).result || {};
+            const preview = (($["Parse Preview Result"]        || {}).data || {}).result || {};
+
+            const statusIcon = preview.passed ? "✅" : "❌";
+            const overallText = preview.passed ? "Passed" : "Failed";
+
+            // Acceptance criteria table
+            const acLines = (preview.ac_results || []).map(ac => {
+              const icon = ac.status === "passed" ? "✅" : ac.status === "failed" ? "❌" : "⏭️";
+              return `| ${ac.id} | ${ac.description} | ${icon} ${ac.status.toUpperCase()} | ${ac.notes || ""} |`;
+            }).join("\n");
+            const acTable = acLines
+              ? "| ID | Criterion | Status | Notes |\n|---|---|---|---|\n" + acLines
+              : "*No acceptance criteria recorded.*";
+
+            // Validation table
+            const v = impl.validation || {};
+            const validLines = Object.entries(v).map(([step, status]) => {
+              const icon = status === "passed" ? "✅" : status === "failed" ? "❌" : "⏭️";
+              return `| ${step} | ${icon} ${status} |`;
+            }).join("\n");
+            const validTable = validLines
+              ? "| Gate | Result |\n|---|---|\n" + validLines
+              : "*Validation data unavailable.*";
+
+            // Preview section
+            const previewSection = deploy.skipped
+              ? "> Preview deployment not configured (set `RENDER_API_KEY` and `RENDER_SERVICE_ID` in `issueforge-secrets`)."
+              : deploy.ok
+              ? `**[Open Preview](${preview.preview_url || deploy.preview_url})**`
+              : `> Deploy failed: ${deploy.error || "unknown error"}`;
+
+            const repairNote = (impl.repair_attempts || 0) > 0
+              ? `\n> _Repair attempts: ${impl.repair_attempts}_` : "";
+
+            const body = `## IssueForge Verification ${statusIcon}
+
+### Result
+**${overallText}**${repairNote}
+
+### Acceptance Criteria
+${acTable}
+
+### Validation Gates
+${validTable}
+
+### Preview
+${previewSection}
+
+### Evidence
+- **Files changed:** ${(impl.files_changed || []).join(", ") || "—"}
+- **Tests added:** ${(impl.tests_added || []).join(", ") || "—"}
+- **Summary:** ${impl.summary || "—"}
+
+---
+*Generated by [IssueForge](https://github.com/your-org/issueforge)*`;
+
+            return {
+              body,
+              pr_number:  impl.pr_number || 0,
+              repo_name:  $["Parse Issue URL"].data.result.repo_name,
+              repo_owner: $["Parse Issue URL"].data.result.repo_owner,
+            };
+          }
+
+    # ──────────────────────────────────────────────────────────
+    # POST EVIDENCE COMMENT to the PR
+    # ──────────────────────────────────────────────────────────
+    - id: post-evidence-comment
+      name: Post Evidence Comment
+      type: TYPE_ACTION
+      component: github.createIssueComment
+      position: { x: 11400, y: 0 }
+      integration:
+        id: YOUR_GITHUB_INTEGRATION_ID
+      configuration:
+        repository: "{{ $['Format Evidence Report'].data.result.repo_name }}"
+        issueNumber: "{{ $['Format Evidence Report'].data.result.pr_number }}"
+        body: "{{ $['Format Evidence Report'].data.result.body }}"
+
+    # ──────────────────────────────────────────────────────────
+    # RECORD SUCCESS
+    # ──────────────────────────────────────────────────────────
+    - id: record-success
+      name: Record Success
+      type: TYPE_ACTION
+      component: upsertMemory
+      position: { x: 12000, y: 0 }
+      configuration:
+        namespace: issueforge_runs
+        matchList:
+          - name: issue_url
+            value: "{{ $['Parse Issue URL'].data.result.issue_url }}"
+        valueList:
+          - name: status
+            value: "success"
+          - name: stage
+            value: "completed"
+          - name: pr_url
+            value: "{{ $['Parse Implementation Result'].data.result.pr_url }}"
+          - name: preview_url
+            value: "{{ $['Parse Preview Result'].data.result.preview_url }}"
+          - name: ac_passed
+            value: "{{ string($['Parse Preview Result'].data.result.ac_passed) }}"
+          - name: ac_total
+            value: "{{ string($['Parse Preview Result'].data.result.ac_total) }}"
+          - name: repair_attempts
+            value: "{{ string($['Parse Implementation Result'].data.result.repair_attempts) }}"
+          - name: completed_at
+            value: "{{ string(int(now().Unix())) }}"
