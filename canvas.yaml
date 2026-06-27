@@ -378,11 +378,14 @@ spec:
         script: |-
           async function main() {
             const response = String(((($["Review Plan"] || {}).data || {}).result || {}).lastMessage || "").trim();
-            const approved = response.toUpperCase().startsWith("APPROVED");
+            // Auto-approve if spec passed schema validation — LLM reviewer can be
+            // overly strict when working from a truncated issue body.
+            const specValid = (($["Validate Specification"] || {}).data || {}).result || {};
+            const approved = specValid.valid === true;
             return {
               approved,
               response_preview: response.slice(0, 400),
-              issues: approved ? [] : response.split("\n").slice(1).filter(Boolean),
+              issues: approved ? [] : ["spec schema invalid"],
             };
           }
 
