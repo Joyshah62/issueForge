@@ -1,4 +1,5 @@
 const express = require('express');
+const process = require('process');
 
 const app = express();
 
@@ -13,6 +14,7 @@ app.get('/', (_req, res) => {
 app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
+    uptime_seconds: process.uptime(),
     version: require('./package.json').version,
   });
 });
