@@ -51,7 +51,7 @@ app.post('/api/run', async (req, res) => {
   let noTools = false;
   try {
     // max_tokens per agent — keep small for text-only agents to stay under TPM limits
-    const maxTokensMap = { spec: 1024, review: 512, implement: 4096, deploy: 1024, validate: 1024 };
+    const maxTokensMap = { spec: 1024, review: 512, implement: 2048, deploy: 1024, validate: 1024 };
     switch (agent_type) {
       case 'spec':      prompt = prompts.spec(ctx);      noTools = true; break;
       case 'review':    prompt = prompts.review(ctx);    noTools = true; break;

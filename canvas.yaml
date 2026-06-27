@@ -439,6 +439,20 @@ spec:
             const parsed  = ($["Parse Issue URL"] || {}).data.result || {};
             const specMsg = ((($["Analyze and Specify"] || {}).data || {}).result || {}).lastMessage || "";
 
+            // Extract only essential fields to keep the implement prompt small
+            let specSummary = specMsg.slice(0, 1200);
+            try {
+              const s = JSON.parse(specMsg);
+              specSummary = JSON.stringify({
+                summary:              s.summary,
+                build_commands:       s.build_commands,
+                acceptance_criteria:  s.acceptance_criteria,
+                likely_files:         s.likely_files,
+                implementation_plan:  s.implementation_plan,
+                test_plan:            s.test_plan,
+              });
+            } catch (_) {}
+
             const resp = await fetch(AGENT_RUNNER_URL + "/api/run", {
               method: "POST",
               headers: {
@@ -454,7 +468,7 @@ spec:
                   repo_full_name: parsed.repo_full_name,
                   clone_url:      parsed.clone_url,
                   branch_name:    parsed.branch_name,
-                  spec:           specMsg,
+                  spec:           specSummary,
                 },
               }),
             });
