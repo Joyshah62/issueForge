@@ -123,7 +123,7 @@ spec:
         machine_type: e1-tiny-amd64
         script: |-
           async function main() {
-            const issueUrl = (root().data.issue_url || "").trim();
+            const issueUrl = (($["Submit Issue"] || {}).data || {}).issue_url || "";
             if (!issueUrl) throw new Error("issue_url is required");
 
             const match = issueUrl.match(/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)/);
@@ -191,7 +191,7 @@ spec:
         machine_type: e1-tiny-amd64
         script: |-
           // ── UPDATE THIS URL after deploying the agent-runner to Render ──
-          const AGENT_RUNNER_URL = "https://issueforge-agent.onrender.com";
+          const AGENT_RUNNER_URL = "https://issueforge-1snp.onrender.com";
           const AGENT_RUNNER_KEY = "e8ecae2cdf8a72d4fc8a328ae6ecef0a";
 
           async function main() {
@@ -317,7 +317,7 @@ spec:
         execution_timeout_seconds: 120
         machine_type: e1-tiny-amd64
         script: |-
-          const AGENT_RUNNER_URL = "https://issueforge-agent.onrender.com";
+          const AGENT_RUNNER_URL = "https://issueforge-1snp.onrender.com";
           const AGENT_RUNNER_KEY = "e8ecae2cdf8a72d4fc8a328ae6ecef0a";
 
           async function main() {
@@ -412,7 +412,7 @@ spec:
         execution_timeout_seconds: 1800
         machine_type: e1-tiny-amd64
         script: |-
-          const AGENT_RUNNER_URL = "https://issueforge-agent.onrender.com";
+          const AGENT_RUNNER_URL = "https://issueforge-1snp.onrender.com";
           const AGENT_RUNNER_KEY = "e8ecae2cdf8a72d4fc8a328ae6ecef0a";
 
           async function main() {
@@ -548,7 +548,7 @@ spec:
         execution_timeout_seconds: 360
         machine_type: e1-tiny-amd64
         script: |-
-          const AGENT_RUNNER_URL = "https://issueforge-agent.onrender.com";
+          const AGENT_RUNNER_URL = "https://issueforge-1snp.onrender.com";
           const AGENT_RUNNER_KEY = "e8ecae2cdf8a72d4fc8a328ae6ecef0a";
 
           async function main() {
@@ -666,7 +666,7 @@ spec:
         execution_timeout_seconds: 300
         machine_type: e1-tiny-amd64
         script: |-
-          const AGENT_RUNNER_URL = "https://issueforge-agent.onrender.com";
+          const AGENT_RUNNER_URL = "https://issueforge-1snp.onrender.com";
           const AGENT_RUNNER_KEY = "e8ecae2cdf8a72d4fc8a328ae6ecef0a";
 
           async function main() {

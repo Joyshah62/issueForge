@@ -4,7 +4,33 @@ const ws = require('./workspace');
 
 const MAX_ITERATIONS = 40;
 
-// Build the OpenAI client once; all config comes from environment.
+// Rough token estimator: 1 token ≈ 4 chars.
+function estimateTokens(messages) {
+  return messages.reduce((sum, m) => {
+    const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '');
+    return sum + Math.ceil(text.length / 4);
+  }, 0);
+}
+
+// Keep context under the limit by truncating old tool result messages.
+// Always preserves: system message, first user message, last N assistant+tool pairs.
+function pruneMessages(messages, maxTokens) {
+  if (estimateTokens(messages) <= maxTokens) return messages;
+
+  const system = messages[0];
+  const firstUser = messages[1];
+  // Walk backwards keeping recent messages until we're under budget
+  const tail = [];
+  let tokens = estimateTokens([system, firstUser]);
+  for (let i = messages.length - 1; i >= 2; i--) {
+    const est = estimateTokens([messages[i]]);
+    if (tokens + est > maxTokens) break;
+    tail.unshift(messages[i]);
+    tokens += est;
+  }
+  return [system, firstUser, ...tail];
+}
+
 function makeClient() {
   return new OpenAI({
     baseURL: process.env.LLM_BASE_URL || 'https://api.groq.com/openai/v1',
@@ -13,6 +39,13 @@ function makeClient() {
 }
 
 const DEFAULT_MODEL = process.env.LLM_MODEL || 'llama-3.3-70b-versatile';
+
+// Max tokens to send per request — stay well under Groq's 6K TPM free limit.
+// Raise this if using Together AI / a provider with higher limits.
+const MAX_CONTEXT_TOKENS = parseInt(process.env.MAX_CONTEXT_TOKENS || '8000', 10);
+
+// Max chars per individual tool result to avoid one large file blowing the budget.
+const MAX_TOOL_OUTPUT_CHARS = parseInt(process.env.MAX_TOOL_OUTPUT_CHARS || '4000', 10);
 
 /**
  * Run a tool-use agent loop.
@@ -36,13 +69,14 @@ async function run(prompt, workspaceDir, opts = {}) {
   let lastMessage = '';
 
   for (let i = 0; i < maxIter; i++) {
+    const pruned = pruneMessages(messages, MAX_CONTEXT_TOKENS);
+
     const params = {
       model,
-      messages,
+      messages: pruned,
       max_tokens: 4096,
     };
 
-    // Some agent types (review) don't need tools
     if (!opts.noTools) {
       params.tools = tools.DEFINITIONS;
       params.tool_choice = 'auto';
@@ -58,16 +92,13 @@ async function run(prompt, workspaceDir, opts = {}) {
     const choice = response.choices[0];
     const msg = choice.message;
 
-    // Push the assistant message to the thread
     messages.push({ role: 'assistant', content: msg.content, tool_calls: msg.tool_calls });
 
-    // No tool calls → the agent is done
     if (!msg.tool_calls || msg.tool_calls.length === 0) {
       lastMessage = msg.content || '';
       break;
     }
 
-    // Execute each tool call in parallel and collect results
     const toolResults = await Promise.all(
       msg.tool_calls.map(async tc => {
         const name = tc.function.name;
@@ -86,13 +117,15 @@ async function run(prompt, workspaceDir, opts = {}) {
           output = `Tool error: ${err.message}`;
         }
 
+        // Hard-cap each tool result to keep context manageable
+        if (output.length > MAX_TOOL_OUTPUT_CHARS) {
+          output = output.slice(0, MAX_TOOL_OUTPUT_CHARS) +
+            `\n\n[truncated — ${output.length} chars total, showing first ${MAX_TOOL_OUTPUT_CHARS}]`;
+        }
+
         steps.push({ tool: name, args, output: output.slice(0, 2000), ms: Date.now() - start });
 
-        return {
-          role: 'tool',
-          tool_call_id: tc.id,
-          content: output,
-        };
+        return { role: 'tool', tool_call_id: tc.id, content: output };
       })
     );
 
