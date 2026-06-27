@@ -68,6 +68,7 @@ No other text.`,
 function implement(ctx) {
   return {
     system: `You are a coding agent. Use shell_exec, read_file, write_file, list_dir, http_request tools.
+IMPORTANT: Call ONE tool at a time and wait for its result before calling the next.
 Never fabricate output. Return final result as raw JSON only.`,
 
     user: `Repo: ${ctx.repo_full_name} | Branch: ${ctx.branch_name} | Issue: #${ctx.issue_number}
@@ -79,7 +80,7 @@ Steps:
 1. shell_exec: git clone --depth=1 ${ctx.clone_url} repo
 2. shell_exec: git -C repo checkout -b ${ctx.branch_name}
 3. shell_exec: git -C repo config user.email "issueforge@bot" && git -C repo config user.name "IssueForge"
-4. Install deps from spec build_commands.install (run in repo/)
+4. Install deps: cd repo/ and run the spec build_commands.install. If npm ci fails, try npm install instead
 5. Read likely_files, implement changes per acceptance_criteria, add tests per test_plan
 6. Run lint, typecheck, test, build (from spec build_commands). On failure fix and retry (max 3 attempts)
 7. shell_exec: git -C repo add -A && git -C repo commit -m "fix: issue #${ctx.issue_number}"

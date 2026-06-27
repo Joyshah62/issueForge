@@ -121,42 +121,41 @@ async function run(prompt, workspaceDir, opts = {}) {
       break;
     }
 
-    const toolResults = await Promise.all(
-      msg.tool_calls.map(async tc => {
-        const name = tc.function.name;
-        let args;
+    const toolResults = [];
+    for (const tc of msg.tool_calls) {
+      const name = tc.function.name;
+      let args;
+      try {
+        args = JSON.parse(tc.function.arguments || '{}');
+      } catch (_) {
+        args = {};
+      }
+
+      const start = Date.now();
+      let output;
+      const validTools = tools.DEFINITIONS.map(t => t.function.name);
+      if (!validTools.includes(name)) {
+        output = `Unknown tool "${name}". Available tools: ${validTools.join(', ')}. Use only these.`;
+      } else {
         try {
-          args = JSON.parse(tc.function.arguments || '{}');
-        } catch (_) {
-          args = {};
+          output = await tools.execute(name, args, workspaceDir);
+        } catch (err) {
+          output = `Tool error: ${err.message}`;
         }
+      }
 
-        const start = Date.now();
-        let output;
-        const validTools = tools.DEFINITIONS.map(t => t.function.name);
-        if (!validTools.includes(name)) {
-          output = `Unknown tool "${name}". Available tools: ${validTools.join(', ')}. Use only these.`;
-        } else {
-          try {
-            output = await tools.execute(name, args, workspaceDir);
-          } catch (err) {
-            output = `Tool error: ${err.message}`;
-          }
-        }
+      // Hard-cap each tool result to keep context manageable
+      if (output.length > MAX_TOOL_OUTPUT_CHARS) {
+        output = output.slice(0, MAX_TOOL_OUTPUT_CHARS) +
+          `\n\n[truncated — ${output.length} chars total, showing first ${MAX_TOOL_OUTPUT_CHARS}]`;
+      }
 
-        // Hard-cap each tool result to keep context manageable
-        if (output.length > MAX_TOOL_OUTPUT_CHARS) {
-          output = output.slice(0, MAX_TOOL_OUTPUT_CHARS) +
-            `\n\n[truncated — ${output.length} chars total, showing first ${MAX_TOOL_OUTPUT_CHARS}]`;
-        }
+      steps.push({ tool: name, args, output: output.slice(0, 2000), ms: Date.now() - start });
 
-        steps.push({ tool: name, args, output: output.slice(0, 2000), ms: Date.now() - start });
+      console.log(`[tool] ${name} args=${JSON.stringify(args).slice(0, 200)} => ${output.slice(0, 300)} (${Date.now() - start}ms)`);
 
-        console.log(`[tool] ${name} args=${JSON.stringify(args).slice(0, 200)} => ${output.slice(0, 300)} (${Date.now() - start}ms)`);
-
-        return { role: 'tool', tool_call_id: tc.id, content: output };
-      })
-    );
+      toolResults.push({ role: 'tool', tool_call_id: tc.id, content: output });
+    }
 
     messages.push(...toolResults);
 
