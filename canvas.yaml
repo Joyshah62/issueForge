@@ -198,6 +198,21 @@ spec:
             const parsed = ($["Parse Issue URL"] || {}).data || {};
             const ctx = parsed.result || {};
 
+            // Pre-fetch the GitHub issue so the spec agent doesn't need tool calls
+            let issueTitle = "";
+            let issueBody = "";
+            try {
+              const ghResp = await fetch(
+                "https://api.github.com/repos/" + ctx.repo_full_name + "/issues/" + ctx.issue_number,
+                { headers: { "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" } }
+              );
+              if (ghResp.ok) {
+                const issue = await ghResp.json();
+                issueTitle = issue.title || "";
+                issueBody  = (issue.body || "").slice(0, 3000);
+              }
+            } catch (_) {}
+
             const resp = await fetch(AGENT_RUNNER_URL + "/api/run", {
               method: "POST",
               headers: {
@@ -212,6 +227,8 @@ spec:
                   issue_number:   ctx.issue_number,
                   repo_full_name: ctx.repo_full_name,
                   clone_url:      ctx.clone_url,
+                  issue_title:    issueTitle,
+                  issue_body:     issueBody,
                 },
               }),
             });

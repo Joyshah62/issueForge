@@ -51,7 +51,7 @@ app.post('/api/run', async (req, res) => {
   let noTools = false;
   try {
     switch (agent_type) {
-      case 'spec':      prompt = prompts.spec(ctx);      break;
+      case 'spec':      prompt = prompts.spec(ctx);      noTools = true; break;
       case 'review':    prompt = prompts.review(ctx);    noTools = true; break;
       case 'implement': prompt = prompts.implement(ctx); break;
       case 'deploy':    prompt = prompts.deploy(ctx);    break;

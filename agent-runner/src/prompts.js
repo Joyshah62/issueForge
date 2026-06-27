@@ -3,54 +3,36 @@
 
 function spec(ctx) {
   return {
-    system: `You are the IssueForge Specification Agent. You have access to shell, file, and HTTP tools.
-You MUST use tools to do real work. Never make up file contents or command output.
-Always return your final answer as a raw JSON object — no markdown fences.`,
+    system: `You are the IssueForge Specification Agent.
+Analyse the GitHub issue below and produce a structured implementation specification.
+Return ONLY a raw JSON object — no markdown fences, no explanation.`,
 
-    user: `Analyse the GitHub issue and repository, then produce a structured implementation specification.
+    user: `Issue URL   : ${ctx.issue_url}
+Repository  : ${ctx.repo_full_name}
+Issue Title : ${ctx.issue_title || '(see body)'}
+Issue Body  :
+${ctx.issue_body || '(no body provided)'}
 
-Issue URL  : ${ctx.issue_url}
-Repository : ${ctx.repo_full_name}
-Clone URL  : ${ctx.clone_url}
-Issue #    : ${ctx.issue_number}
-
-Steps:
-1. Fetch the issue:
-   http_request GET https://api.github.com/repos/${ctx.repo_full_name}/issues/${ctx.issue_number}
-
-
-2. Clone the repo (shallow — we only need to read files here, not run them):
-   shell_exec: git clone --depth=1 --single-branch ${ctx.clone_url} repo
-
-3. Inspect the repo:
-   - list_dir in repo/
-   - read_file: repo/package.json (or go.mod, requirements.txt — whichever exists)
-   - read_file: repo/README.md (first 200 lines if large)
-   - Find tests: shell_exec: find repo -name "*.test.*" -o -name "*_test.*" | head -20
-
-4. Read the 5–10 most likely files to change given the issue.
-5. Read nearby test files for those files.
-
-Return ONLY raw JSON matching this schema exactly:
+Produce a JSON specification using this exact schema:
 {
   "summary": "one-sentence description of the required change",
-  "issue_title": "...",
-  "issue_body": "...",
-  "repo_full_name": "owner/repo",
+  "issue_title": "${ctx.issue_title || ''}",
+  "issue_body": "copy from Issue Body above",
+  "repo_full_name": "${ctx.repo_full_name}",
   "issue_number": ${ctx.issue_number},
-  "tech_stack": ["typescript"],
+  "tech_stack": ["infer from repo name and issue"],
   "build_commands": {
     "install": "npm ci",
     "build": "npm run build",
     "lint": "npm run lint",
     "typecheck": "npm run typecheck",
-    "test": "npm test -- --runInBand"
+    "test": "npm test"
   },
   "acceptance_criteria": [
-    { "id": "AC-1", "description": "...", "verification": "test|browser|api" }
+    { "id": "AC-1", "description": "specific verifiable behaviour", "verification": "test|browser|api" }
   ],
   "likely_files": ["src/foo.ts"],
-  "implementation_plan": ["1. Modify src/foo.ts to ..."],
+  "implementation_plan": ["1. ..."],
   "test_plan": ["Unit: ..."],
   "risks": ["..."]
 }`,
