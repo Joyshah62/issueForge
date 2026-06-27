@@ -111,10 +111,15 @@ async function run(prompt, workspaceDir, opts = {}) {
 
         const start = Date.now();
         let output;
-        try {
-          output = await tools.execute(name, args, workspaceDir);
-        } catch (err) {
-          output = `Tool error: ${err.message}`;
+        const validTools = tools.DEFINITIONS.map(t => t.function.name);
+        if (!validTools.includes(name)) {
+          output = `Unknown tool "${name}". Available tools: ${validTools.join(', ')}. Use only these.`;
+        } else {
+          try {
+            output = await tools.execute(name, args, workspaceDir);
+          } catch (err) {
+            output = `Tool error: ${err.message}`;
+          }
         }
 
         // Hard-cap each tool result to keep context manageable
