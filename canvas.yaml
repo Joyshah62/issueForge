@@ -824,9 +824,9 @@ spec:
         machine_type: e1-tiny-amd64
         script: |-
           async function main() {
-            const impl    = ((($["Parse Implementation Result"] || {}).data || {}).result || {};
-            const deploy  = ((($["Parse Deploy Result"]         || {}).data || {}).result || {};
-            const preview = ((($["Parse Preview Result"]        || {}).data || {}).result || {};
+            const impl    = (($["Parse Implementation Result"] || {}).data || {}).result || {};
+            const deploy  = (($["Parse Deploy Result"]         || {}).data || {}).result || {};
+            const preview = (($["Parse Preview Result"]        || {}).data || {}).result || {};
 
             const statusMark = preview.passed ? "PASSED" : "FAILED";
             const overallText = preview.passed ? "Passed" : "Failed";

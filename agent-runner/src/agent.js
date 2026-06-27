@@ -145,6 +145,11 @@ async function run(prompt, workspaceDir, opts = {}) {
     );
 
     messages.push(...toolResults);
+
+    // Pace iterations to avoid burning through Groq's TPM rate limit.
+    // 3 s gap keeps a 10-turn loop under 12 000 TPM (llama-3.3-70b) comfortably.
+    const iterDelay = parseInt(process.env.ITER_DELAY_MS || '3000', 10);
+    if (iterDelay > 0) await new Promise(r => setTimeout(r, iterDelay));
   }
 
   return { lastMessage, steps, iterations: steps.length };
