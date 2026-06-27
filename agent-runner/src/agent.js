@@ -117,6 +117,7 @@ async function run(prompt, workspaceDir, opts = {}) {
 
     if (!msg.tool_calls || msg.tool_calls.length === 0) {
       lastMessage = msg.content || '';
+      console.log(`[agent] final response: ${lastMessage.slice(0, 500)}`);
       break;
     }
 
@@ -150,6 +151,8 @@ async function run(prompt, workspaceDir, opts = {}) {
         }
 
         steps.push({ tool: name, args, output: output.slice(0, 2000), ms: Date.now() - start });
+
+        console.log(`[tool] ${name} args=${JSON.stringify(args).slice(0, 200)} => ${output.slice(0, 300)} (${Date.now() - start}ms)`);
 
         return { role: 'tool', tool_call_id: tc.id, content: output };
       })
