@@ -78,7 +78,8 @@ const DEFINITIONS = [
     type: 'function',
     function: {
       name: 'http_request',
-      description: 'Make an HTTP request and return the response body.',
+      description:
+        'Make an HTTP request. Auth headers for github.com and api.render.com are injected automatically — do NOT pass an Authorization header yourself.',
       parameters: {
         type: 'object',
         properties: {
@@ -88,13 +89,9 @@ const DEFINITIONS = [
             description: 'HTTP method.',
           },
           url: { type: 'string', description: 'Full URL.' },
-          headers: {
-            type: 'object',
-            description: 'Request headers (key-value pairs).',
-          },
           body: {
             type: 'string',
-            description: 'JSON-serialised request body for POST/PATCH/PUT.',
+            description: 'JSON-serialised request body (POST/PATCH/PUT only).',
           },
         },
         required: ['method', 'url'],
@@ -148,10 +145,19 @@ async function execute(name, args, workspaceDir) {
 
     case 'http_request': {
       try {
-        const opts = {
-          method: args.method,
-          headers: { 'Content-Type': 'application/json', ...(args.headers || {}) },
-        };
+        const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+
+        // Auto-inject auth — the model never needs to pass credentials manually
+        if (args.url.includes('github.com') && process.env.GITHUB_TOKEN) {
+          headers['Authorization'] = `Bearer ${process.env.GITHUB_TOKEN}`;
+          headers['Accept'] = 'application/vnd.github+json';
+          headers['X-GitHub-Api-Version'] = '2022-11-28';
+        }
+        if (args.url.includes('api.render.com') && process.env.RENDER_API_KEY) {
+          headers['Authorization'] = `Bearer ${process.env.RENDER_API_KEY}`;
+        }
+
+        const opts = { method: args.method, headers };
         if (args.body) opts.body = args.body;
         const resp = await fetch(args.url, opts);
         const text = await resp.text();
